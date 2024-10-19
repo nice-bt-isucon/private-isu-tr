@@ -204,6 +204,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 		p.Comments = comments
 
+		// FIXME: JOINで取得して、そもそもDelFlgが0のものだけ取得するようにする
 		err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
 		if err != nil {
 			return nil, err
@@ -387,7 +388,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	results := []Post{}
 
 	err := db.Select(&results,
-		"SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` ORDER BY `created_at` DESC LIMIT ?",
+		"SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` INNER JOIN users ON users.id = posts.user_id AND users.del_flg = false ORDER BY `created_at` DESC LIMIT ?",
 		postsPerPage)
 	if err != nil {
 		log.Print(err)
