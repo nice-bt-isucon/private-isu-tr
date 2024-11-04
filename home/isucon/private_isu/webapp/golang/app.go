@@ -172,6 +172,7 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
+	log.Printf("makePosts [arg: csrfToken]", csrfToken)
 	var posts []Post
 
 	for _, p := range results {
@@ -187,342 +188,343 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 		var comments []Comment
 		err = db.Select(&comments, query, p.ID)
 		if err != nil {
-			return nil, err
-		}
+		return nil, err
+	}
 
-		for i := 0; i < len(comments); i++ {
-			err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// reverse
-		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
-			comments[i], comments[j] = comments[j], comments[i]
-		}
-
-		p.Comments = comments
-
-		// FIXME: JOINで取得して、そもそもDelFlgが0のものだけ取得するようにする
-		err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
+	for i := 0; i < len(comments); i++ {
+		err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
 		if err != nil {
 			return nil, err
 		}
-
-		p.CSRFToken = csrfToken
-
-		if p.User.DelFlg == 0 {
-			posts = append(posts, p)
-		}
-		if len(posts) >= postsPerPage {
-			break
-		}
 	}
 
-	return posts, nil
+	// reverse
+	for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
+		comments[i], comments[j] = comments[j], comments[i]
+	}
+
+	p.Comments = comments
+
+	// FIXME: JOINで取得して、そもそもDelFlgが0のものだけ取得するようにする
+	//  err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
+	// if err != nil {
+	//	return nil, err
+	//}
+
+	p.CSRFToken = csrfToken
+
+	if p.User.DelFlg == 0 {
+		posts = append(posts, p)
+	}
+	if len(posts) >= postsPerPage {
+		break
+	}
+}
+
+return posts, nil
 }
 
 func imageURL(p Post) string {
-	ext := ""
-	if p.Mime == "image/jpeg" {
-		ext = ".jpg"
-	} else if p.Mime == "image/png" {
-		ext = ".png"
-	} else if p.Mime == "image/gif" {
-		ext = ".gif"
-	}
+ext := ""
+if p.Mime == "image/jpeg" {
+	ext = ".jpg"
+} else if p.Mime == "image/png" {
+	ext = ".png"
+} else if p.Mime == "image/gif" {
+	ext = ".gif"
+}
 
-	return "/image/" + strconv.Itoa(p.ID) + ext
+return "/image/" + strconv.Itoa(p.ID) + ext
 }
 
 func isLogin(u User) bool {
-	return u.ID != 0
+return u.ID != 0
 }
 
 func getCSRFToken(r *http.Request) string {
-	session := getSession(r)
-	csrfToken, ok := session.Values["csrf_token"]
-	if !ok {
-		return ""
-	}
-	return csrfToken.(string)
+session := getSession(r)
+csrfToken, ok := session.Values["csrf_token"]
+log.Printf("getCSRFToken", csrfToken)
+if !ok {
+	return ""
+}
+return csrfToken.(string)
 }
 
 func secureRandomStr(b int) string {
-	k := make([]byte, b)
-	if _, err := crand.Read(k); err != nil {
-		panic(err)
-	}
-	return fmt.Sprintf("%x", k)
+k := make([]byte, b)
+if _, err := crand.Read(k); err != nil {
+	panic(err)
+}
+return fmt.Sprintf("%x", k)
 }
 
 func getTemplPath(filename string) string {
-	return path.Join("templates", filename)
+return path.Join("templates", filename)
 }
 
 func getInitialize(w http.ResponseWriter, r *http.Request) {
-	dbInitialize()
-	w.WriteHeader(http.StatusOK)
+dbInitialize()
+w.WriteHeader(http.StatusOK)
 }
 
 func getLogin(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+me := getSessionUser(r)
 
-	if isLogin(me) {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
+if isLogin(me) {
+	http.Redirect(w, r, "/", http.StatusFound)
+	return
+}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("login.html")),
-	).Execute(w, struct {
-		Me    User
-		Flash string
-	}{me, getFlash(w, r, "notice")})
+template.Must(template.ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("login.html")),
+).Execute(w, struct {
+	Me    User
+	Flash string
+}{me, getFlash(w, r, "notice")})
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
-	if isLogin(getSessionUser(r)) {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-
-	u := tryLogin(r.FormValue("account_name"), r.FormValue("password"))
-
-	if u != nil {
-		session := getSession(r)
-		session.Values["user_id"] = u.ID
-		session.Values["csrf_token"] = secureRandomStr(16)
-		session.Save(r, w)
-
-		http.Redirect(w, r, "/", http.StatusFound)
-	} else {
-		session := getSession(r)
-		session.Values["notice"] = "アカウント名かパスワードが間違っています"
-		session.Save(r, w)
-
-		http.Redirect(w, r, "/login", http.StatusFound)
-	}
+if isLogin(getSessionUser(r)) {
+	http.Redirect(w, r, "/", http.StatusFound)
+	return
 }
 
-func getRegister(w http.ResponseWriter, r *http.Request) {
-	if isLogin(getSessionUser(r)) {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
+u := tryLogin(r.FormValue("account_name"), r.FormValue("password"))
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("register.html")),
-	).Execute(w, struct {
-		Me    User
-		Flash string
-	}{User{}, getFlash(w, r, "notice")})
-}
-
-func postRegister(w http.ResponseWriter, r *http.Request) {
-	if isLogin(getSessionUser(r)) {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-
-	accountName, password := r.FormValue("account_name"), r.FormValue("password")
-
-	validated := validateUser(accountName, password)
-	if !validated {
-		session := getSession(r)
-		session.Values["notice"] = "アカウント名は3文字以上、パスワードは6文字以上である必要があります"
-		session.Save(r, w)
-
-		http.Redirect(w, r, "/register", http.StatusFound)
-		return
-	}
-
-	exists := 0
-	// ユーザーが存在しない場合はエラーになるのでエラーチェックはしない
-	db.Get(&exists, "SELECT 1 FROM users WHERE `account_name` = ?", accountName)
-
-	if exists == 1 {
-		session := getSession(r)
-		session.Values["notice"] = "アカウント名がすでに使われています"
-		session.Save(r, w)
-
-		http.Redirect(w, r, "/register", http.StatusFound)
-		return
-	}
-
-	query := "INSERT INTO `users` (`account_name`, `passhash`) VALUES (?,?)"
-	result, err := db.Exec(query, accountName, calculatePasshash(accountName, password))
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
+if u != nil {
 	session := getSession(r)
-	uid, err := result.LastInsertId()
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	session.Values["user_id"] = uid
+	session.Values["user_id"] = u.ID
 	session.Values["csrf_token"] = secureRandomStr(16)
 	session.Save(r, w)
 
 	http.Redirect(w, r, "/", http.StatusFound)
+} else {
+	session := getSession(r)
+	session.Values["notice"] = "アカウント名かパスワードが間違っています"
+	session.Save(r, w)
+
+	http.Redirect(w, r, "/login", http.StatusFound)
+}
+}
+
+func getRegister(w http.ResponseWriter, r *http.Request) {
+if isLogin(getSessionUser(r)) {
+	http.Redirect(w, r, "/", http.StatusFound)
+	return
+}
+
+template.Must(template.ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("register.html")),
+).Execute(w, struct {
+	Me    User
+	Flash string
+}{User{}, getFlash(w, r, "notice")})
+}
+
+func postRegister(w http.ResponseWriter, r *http.Request) {
+if isLogin(getSessionUser(r)) {
+	http.Redirect(w, r, "/", http.StatusFound)
+	return
+}
+
+accountName, password := r.FormValue("account_name"), r.FormValue("password")
+
+validated := validateUser(accountName, password)
+if !validated {
+	session := getSession(r)
+	session.Values["notice"] = "アカウント名は3文字以上、パスワードは6文字以上である必要があります"
+	session.Save(r, w)
+
+	http.Redirect(w, r, "/register", http.StatusFound)
+	return
+}
+
+exists := 0
+// ユーザーが存在しない場合はエラーになるのでエラーチェックはしない
+db.Get(&exists, "SELECT 1 FROM users WHERE `account_name` = ?", accountName)
+
+if exists == 1 {
+	session := getSession(r)
+	session.Values["notice"] = "アカウント名がすでに使われています"
+	session.Save(r, w)
+
+	http.Redirect(w, r, "/register", http.StatusFound)
+	return
+}
+
+query := "INSERT INTO `users` (`account_name`, `passhash`) VALUES (?,?)"
+result, err := db.Exec(query, accountName, calculatePasshash(accountName, password))
+if err != nil {
+	log.Print(err)
+	return
+}
+
+session := getSession(r)
+uid, err := result.LastInsertId()
+if err != nil {
+	log.Print(err)
+	return
+}
+session.Values["user_id"] = uid
+session.Values["csrf_token"] = secureRandomStr(16)
+session.Save(r, w)
+
+http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func getLogout(w http.ResponseWriter, r *http.Request) {
-	session := getSession(r)
-	delete(session.Values, "user_id")
-	session.Options = &sessions.Options{MaxAge: -1}
-	session.Save(r, w)
+session := getSession(r)
+delete(session.Values, "user_id")
+session.Options = &sessions.Options{MaxAge: -1}
+session.Save(r, w)
 
-	http.Redirect(w, r, "/", http.StatusFound)
+http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func getIndex(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+me := getSessionUser(r)
 
-	results := []Post{}
+results := []Post{}
 
-	err := db.Select(&results,
-		"SELECT `posts`.`id`, `posts`.`user_id`, `posts`.`body`, `posts`.`mime`, `posts`.`created_at` FROM `posts` STRAIGHT_JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = false ORDER BY `posts`.`created_at` DESC LIMIT ?", postsPerPage)
-	if err != nil {
-		log.Print(err)
-		return
-	}
+err := db.Select(&results,
+	"SELECT `posts`.`id`, `posts`.`user_id`, `posts`.`body`, `posts`.`mime`, `posts`.`created_at` FROM `posts` STRAIGHT_JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = false ORDER BY `posts`.`created_at` DESC LIMIT ?", postsPerPage)
+if err != nil {
+	log.Print(err)
+	return
+}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
+posts, err := makePosts(results, getCSRFToken(r), false)
+if err != nil {
+	log.Print(err)
+	return
+}
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
+fmap := template.FuncMap{
+	"imageURL": imageURL,
+}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts     []Post
-		Me        User
-		CSRFToken string
-		Flash     string
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
+template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("index.html"),
+	getTemplPath("posts.html"),
+	getTemplPath("post.html"),
+)).Execute(w, struct {
+	Posts     []Post
+	Me        User
+	CSRFToken string
+	Flash     string
+}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
-	accountName := r.PathValue("accountName")
-	user := User{}
+accountName := r.PathValue("accountName")
+user := User{}
 
-	err := db.Get(&user, "SELECT * FROM `users` WHERE `account_name` = ? AND `del_flg` = 0", accountName)
+err := db.Get(&user, "SELECT * FROM `users` WHERE `account_name` = ? AND `del_flg` = 0", accountName)
+if err != nil {
+	log.Print(err)
+	return
+}
+
+if user.ID == 0 {
+	w.WriteHeader(http.StatusNotFound)
+	return
+}
+
+results := []Post{}
+
+err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
+if err != nil {
+	log.Print(err)
+	return
+}
+
+posts, err := makePosts(results, getCSRFToken(r), false)
+if err != nil {
+	log.Print(err)
+	return
+}
+
+commentCount := 0
+err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
+if err != nil {
+	log.Print(err)
+	return
+}
+
+postIDs := []int{}
+err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
+if err != nil {
+	log.Print(err)
+	return
+}
+postCount := len(postIDs)
+
+commentedCount := 0
+if postCount > 0 {
+	s := []string{}
+	for range postIDs {
+		s = append(s, "?")
+	}
+	placeholder := strings.Join(s, ", ")
+
+	// convert []int -> []interface{}
+	args := make([]interface{}, len(postIDs))
+	for i, v := range postIDs {
+		args[i] = v
+	}
+
+	err = db.Get(&commentedCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
 	if err != nil {
 		log.Print(err)
 		return
 	}
+}
 
-	if user.ID == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
+me := getSessionUser(r)
 
-	results := []Post{}
+fmap := template.FuncMap{
+	"imageURL": imageURL,
+}
 
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	commentCount := 0
-	err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	postIDs := []int{}
-	err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	postCount := len(postIDs)
-
-	commentedCount := 0
-	if postCount > 0 {
-		s := []string{}
-		for range postIDs {
-			s = append(s, "?")
-		}
-		placeholder := strings.Join(s, ", ")
-
-		// convert []int -> []interface{}
-		args := make([]interface{}, len(postIDs))
-		for i, v := range postIDs {
-			args[i] = v
-		}
-
-		err = db.Get(&commentedCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-	}
-
-	me := getSessionUser(r)
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("user.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts          []Post
-		User           User
-		PostCount      int
-		CommentCount   int
-		CommentedCount int
-		Me             User
-	}{posts, user, postCount, commentCount, commentedCount, me})
+template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("user.html"),
+	getTemplPath("posts.html"),
+	getTemplPath("post.html"),
+)).Execute(w, struct {
+	Posts          []Post
+	User           User
+	PostCount      int
+	CommentCount   int
+	CommentedCount int
+	Me             User
+}{posts, user, postCount, commentCount, commentedCount, me})
 }
 
 func getPosts(w http.ResponseWriter, r *http.Request) {
-	m, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Print(err)
-		return
-	}
-	maxCreatedAt := m.Get("max_created_at")
-	if maxCreatedAt == "" {
-		return
-	}
+m, err := url.ParseQuery(r.URL.RawQuery)
+if err != nil {
+	w.WriteHeader(http.StatusInternalServerError)
+	log.Print(err)
+	return
+}
+maxCreatedAt := m.Get("max_created_at")
+if maxCreatedAt == "" {
+	return
+}
 
-	t, err := time.Parse(ISO8601Format, maxCreatedAt)
-	if err != nil {
-		log.Print(err)
-		return
-	}
+t, err := time.Parse(ISO8601Format, maxCreatedAt)
+if err != nil {
+	log.Print(err)
+	return
+}
 
-	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
+results := []Post{}
+err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
 	if err != nil {
 		log.Print(err)
 		return
